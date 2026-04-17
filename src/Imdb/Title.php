@@ -32,8 +32,10 @@ class Title extends MdbBase
     const TV_SHORT = 'TV Short';
     const GAME = 'Video Game';
     const VIDEO = 'Video';
+    const MUSIC_VIDEO = 'Music Video';
     const SHORT = 'Short';
     const PODCAST_EPISODE = 'Podcast Episode';
+    const PODCAST_SERIES = 'Podcast Series';
 
     protected $akas = array();
     protected $awards = array();
@@ -2193,9 +2195,6 @@ EOF;
     {
         if (empty($this->goofs)) {
             $xpath = $this->getXpathPage("Goofs");
-            if (empty($xpath)) {
-                return array();
-            } // no such page
             $ids = array();
 
             $cells = $xpath->query("//h3[@class='ipc-title__text']//span");
@@ -3170,7 +3169,7 @@ EOF;
 
     /**
      * Get filming dates
-     * @return null|array[beginning, end]
+     * @return null|array [beginning, end]
      * Time format : YYYY-MM-DD
      * @see IMDB page / (Locations)
      */
