@@ -2074,8 +2074,8 @@ EOF;
                         $airdate = "";
                         if (isset($ep->releaseDate->year)) {
                             $y = (int)$ep->releaseDate->year;
-                            $m = (int)($ep->releaseDate->month ?? 0);
-                            $d = (int)($ep->releaseDate->day ?? 0);
+                            $m = (int)($ep->releaseDate->month ? $ep->releaseDate->month : 0);
+                            $d = (int)($ep->releaseDate->day ? $ep->releaseDate->day : 0);
 
                             if ($m >= 1 && $m <= 12) {
                                 if ($d > 0 && $d <= 31) {
