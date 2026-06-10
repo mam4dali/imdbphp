@@ -814,19 +814,21 @@ EOF;
     public function seasons()
     {
         if ($this->seasoncount == -1) {
-            $xpath = $this->getXpathPage("Title");
-            $dom_xpath_result = $xpath->query('//select[@id="browse-episodes-season"]//option');
+            $dom_xpath_result = $this->XmlNextJson()->xpath("//episodes/seasons/e[__typename='EpisodesSeason']");
             $this->seasoncount = 0;
-            foreach ($dom_xpath_result as $xnode) {
-                if (!empty($xnode->getAttribute('value')) && intval($xnode->getAttribute('value')) > $this->seasoncount) {
-                    $this->seasoncount = intval($xnode->getAttribute('value'));
+
+            if ($dom_xpath_result) {
+                foreach ($dom_xpath_result as $xnode) {
+                    if (isset($xnode->number) && (int)$xnode->number > $this->seasoncount) {
+                        $this->seasoncount = (int)$xnode->number;
+                    }
                 }
             }
 
             if ($this->seasoncount === 0) {
-                // Single season shows have a link rather than a select box
-                if (preg_match('|href="/title/tt\d{7,8}/episodes\?season=\d+|i', $this->getPage("Title"))) {
-                    $this->seasoncount = 1;
+                // Fallback: extract max season from links on the Episodes page
+                if (preg_match_all('|href="/title/tt\d{7,8}/episodes\/?\?season=(\d+)|i', $this->getPage("Episodes"), $matches)) {
+                    $this->seasoncount = max(array_map('intval', $matches[1]));
                 }
             }
         }
@@ -845,7 +847,7 @@ EOF;
             return $this->isSerial;
         }
 
-        return $this->isSerial = (bool)preg_match('|href="/title/tt\d{7,8}/episodes\?|i', $this->getPage("Title"));
+        return $this->isSerial = (bool)preg_match('|href="\/title\/tt\d{7,8}\/episodes\/?\?|i', $this->getPage("Title"));
     }
 
     /**
@@ -2043,74 +2045,68 @@ EOF;
                     return array();
                 }
             }
-            $page = $this->getPage("Episodes");
-            if (empty($page)) {
+            $seasons = $this->seasons();
+            if ($seasons === 0) {
                 return $this->season_episodes;
             }
 
-            /*
-             * There are (sometimes) two select boxes: one per season and one per year.
-             * IMDb picks one select to use by default and the other starts with an empty option.
-             * The one which starts with a numeric option is the one we need to loop over sometimes the other doesn't work
-             * (e.g. a show without seasons might have 100s of episodes in season 1 and its page won't load)
-             *
-             * default to year based
-             */
-            $selectId = 'id="byYear"';
-            if (preg_match('!<select id="bySeason"(.*?)</select!ims', $page, $matchSeason)) {
-                preg_match_all('#<\s*?option\b[^>]*>(.*?)</option\b[^>]*>#s', $matchSeason[1], $matchOptionSeason);
-                if (is_numeric(trim($matchOptionSeason[1][0]))) {
-                    //season based
-                    $selectId = 'id="bySeason"';
+            for ($s = 1; $s <= $seasons; ++$s) {
+                try {
+                    $dom_xpath_result = $this->XmlNextJson("Episodes-$s")->xpath("//episodes/items/e[type='tvEpisode']");
+                } catch (\Throwable $e) {
+                    continue;
                 }
-            }
 
-            if (preg_match('!<select ' . $selectId . '(.*?)</select!ims', $page, $match)) {
-                preg_match_all('!<option\s+(selected="selected" |)value="([^"]+)">!i', $match[1], $matches);
-                $count = count($matches[0]);
-                for ($i = 0; $i < $count; ++$i) {
-                    $s = $matches[2][$i];
-                    $page = $this->getPage("Episodes-$s");
-                    if (empty($page)) {
-                        continue; // no such page
-                    }
-                    // fetch episodes images
-                    preg_match_all('!<div class="image">\s*(?<img>.*?)\s*</div>\s*!ims', $page, $img);
-                    $urlIndex = 0;
-                    $preg = '!<div class="info" itemprop="episodes".+?>\s*<meta itemprop="episodeNumber" content="(?<episodeNumber>-?\d+)"/>\s*'
-                        . '<div class="airdate">\s*(?<airdate>.*?)\s*</div>\s*'
-                        . '.+?\shref="/title/tt(?<imdbid>\d{7,8})/[^"]+?"\s+title="(?<title>[^"]+?)"\s+itemprop="name"'
-                        . '.+?<div class="item_description" itemprop="description">(?<plot>.*?)</div>!ims';
-                    preg_match_all($preg, $page, $eps, PREG_SET_ORDER);
-                    foreach ($eps as $ep) {
-                        //Fetch episodes image url
-                        if (preg_match('/(?<!_)src=([\'"])?(.*?)\\1/', $img['img'][$urlIndex], $foundUrl)) {
-                            $image_url = $foundUrl[2];
-                        } else {
-                            $image_url = "";
+                if ($dom_xpath_result) {
+                    foreach ($dom_xpath_result as $ep) {
+                        $imdbid = preg_replace('/^tt/', '', (string)$ep->id);
+
+                        $image_url = "";
+                        if (isset($ep->image->url)) {
+                            $image_url = (string)$ep->image->url;
                         }
-                        $plot = preg_replace('#<a href="[^"]+"\s+>Add a Plot</a>#', '', trim($ep['plot']));
-                        $plot = preg_replace(
-                            '#Know what this is about\?<br>\s*<a href="[^"]+"\s*> Be the first one to add a plot.\s*</a>#ims',
-                            '',
-                            $plot
-                        );
+
+                        $plot = "";
+                        if (isset($ep->plot)) {
+                            $plot = strip_tags((string)$ep->plot);
+                        }
+
+                        $airdate = "";
+                        if (isset($ep->releaseDate->year)) {
+                            $y = (int)$ep->releaseDate->year;
+                            $m = (int)($ep->releaseDate->month ?? 0);
+                            $d = (int)($ep->releaseDate->day ?? 0);
+
+                            if ($m >= 1 && $m <= 12) {
+                                if ($d > 0 && $d <= 31) {
+                                    // If we have a valid day, month and year, return in format "j M Y" (e.g. "1 Jan 2000")
+                                    $airdate = \DateTime::createFromFormat('Y-n-j', "$y-$m-$d")->format('j M Y');
+                                } else {
+                                    // If no valid day, but we have a valid month and year, return in format "M Y" (e.g. "Jan 2000")
+                                    $airdate = \DateTime::createFromFormat('Y-n', "$y-$m")->format('M Y');
+                                }
+                            } else {
+                                // If no valid month, just return the year
+                                $airdate = (string)$y;
+                            }
+                        }
+
+                        $episodeNumber = (isset($ep->episode) && (string)$ep->episode !== "") ? (int)$ep->episode : -1;
 
                         $episode = array(
-                            'imdbid' => $ep['imdbid'],
-                            'title' => trim($ep['title']),
-                            'airdate' => $ep['airdate'],
-                            'plot' => strip_tags($plot),
+                            'imdbid' => $imdbid,
+                            'title' => trim((string)$ep->titleText),
+                            'airdate' => $airdate,
+                            'plot' => $plot,
                             'season' => (int)$s,
-                            'episode' => (int)$ep['episodeNumber'],
+                            'episode' => $episodeNumber,
                             'image_url' => $image_url
                         );
-                        $urlIndex = $urlIndex + 1;
 
-                        if ($ep['episodeNumber'] == -1) {
+                        if ($episodeNumber == -1) {
                             $this->season_episodes[$s][] = $episode;
                         } else {
-                            $this->season_episodes[$s][$ep['episodeNumber']] = $episode;
+                            $this->season_episodes[$s][$episodeNumber] = $episode;
                         }
                     }
                 }
