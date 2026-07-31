@@ -60,12 +60,14 @@ class GraphQL
     {
         $request = new Request('https://api.graphql.imdb.com/', $this->config);
         $request->addHeaderLine("Content-Type", "application/json");
+        $request->addHeaderLine("x-imdb-client-name", "imdb-web-next-localized");
 
         $payload = json_encode(
             array(
             'operationName' => $queryName,
             'query' => $query,
-            'variables' => $variables)
+            // an empty PHP array encodes to [], which the endpoint rejects with a 400
+            'variables' => (object)$variables)
         );
 
         $this->logger->info("[GraphQL] Requesting $queryName");
